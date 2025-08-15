@@ -185,17 +185,29 @@ class BrowserUseAPI:
                     raise Exception(f"Failed to get task ID: {detail}")
                 
                 print(f"📋 Task started with ID: {task_id}")
+                print(f"🔗 Task URL: https://api.browser-use.com/api/v1/task/{task_id}")
                 
-                # Poll for task completion
-                return await self._poll_task_completion(session, task_id, headers)
+                # Give the task a moment to initialize
+                print("⏳ Waiting 3 seconds for task to initialize...")
+                await asyncio.sleep(3)
+                
+                # Poll for task completion and wait for it to finish
+                print(f"🔄 Beginning to poll task {task_id} for completion...")
+                final_result = await self._poll_task_completion(session, task_id, headers)
+                print(f"🎉 Task {task_id} completed with result: {final_result[:200]}...")
+                return final_result
     
     async def _poll_task_completion(self, session: aiohttp.ClientSession, task_id: str, headers: dict) -> str:
         """Poll for task completion and return results"""
-        max_attempts = 60  # 5 minutes with 5-second intervals
+        max_attempts = 120  # 10 minutes with 5-second intervals
         attempt = 0
+        
+        print(f"🔄 Starting to poll task {task_id} for completion...")
         
         while attempt < max_attempts:
             try:
+                print(f"📡 Polling attempt {attempt + 1}/{max_attempts} for task {task_id}...")
+                
                 async with session.get(
                     f"{self.base_url}/task/{task_id}",
                     headers=headers
@@ -209,26 +221,38 @@ class BrowserUseAPI:
                     
                     task_data = await response.json()
                     status = task_data.get("status")
+                    output = task_data.get("output", "")
                     
-                    print(f"📊 Task {task_id} status: {status}")
+                    print(f"📊 Task {task_id} status: {status} (attempt {attempt + 1}/{max_attempts})")
                     
-                    if status == "completed":
-                        result = task_data.get("result", "Task completed successfully")
-                        print(f"✅ Task {task_id} completed successfully")
+                    # Check for completion statuses
+                    if status == "finished":
+                        result = output if output else "Task completed successfully"
+                        print(f"✅ Task {task_id} finished successfully")
+                        print(f"📄 Task output: {result[:500]}...")
                         return str(result)
                     
                     elif status == "failed":
                         error = task_data.get("error", "Unknown error")
+                        print(f"❌ Task {task_id} failed: {error}")
                         raise Exception(f"Task failed: {error}")
                     
-                    elif status in ["running", "pending"]:
+                    elif status == "stopped":
+                        result = output if output else "Task was stopped"
+                        print(f"⏹️  Task {task_id} was stopped")
+                        print(f"📄 Task output: {result[:500]}...")
+                        return str(result)
+                    
+                    elif status in ["running", "pending", "queued"]:
                         # Task is still running, wait and check again
+                        print(f"⏳ Task {task_id} is {status}, waiting 5 seconds...")
                         await asyncio.sleep(5)
                         attempt += 1
                         continue
                     
                     else:
-                        print(f"⚠️  Unknown status: {status}")
+                        print(f"⚠️  Unknown status '{status}' for task {task_id}")
+                        print(f"📄 Full response: {task_data}")
                         await asyncio.sleep(5)
                         attempt += 1
                         continue
@@ -238,7 +262,8 @@ class BrowserUseAPI:
                 await asyncio.sleep(5)
                 attempt += 1
         
-        raise Exception(f"Task {task_id} timed out after {max_attempts * 5} seconds")
+        print(f"⏰ Task {task_id} timed out after {max_attempts * 5} seconds (10 minutes)")
+        raise Exception(f"Task {task_id} timed out after {max_attempts * 5} seconds (10 minutes)")
 
 async def execute_scheduled_task(task: ScheduledTask, db_manager: DatabaseManager):
     """Execute a single scheduled task using Browser-Use Cloud API"""
