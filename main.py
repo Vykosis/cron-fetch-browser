@@ -2,7 +2,7 @@ import asyncio
 import os
 import pydantic
 import psycopg2
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 from dotenv import load_dotenv
 import schedule
@@ -71,11 +71,17 @@ class DatabaseManager:
     
     def _is_task_due(self, task: ScheduledTask) -> bool:
         """Check if a task is due for execution based on its schedule"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         # If never run before, it's due
         if task.last_run_at is None:
             return True
+        
+        # Ensure last_run_at is timezone-aware
+        last_run = task.last_run_at
+        if last_run.tzinfo is None:
+            # If naive, assume UTC
+            last_run = last_run.replace(tzinfo=timezone.utc)
         
         # Parse schedule (assuming format like "every 1 hour", "every 30 minutes", etc.)
         schedule_text = task.schedule.lower()
@@ -85,37 +91,37 @@ class DatabaseManager:
                 # Extract number of hours
                 try:
                     hours = int(''.join(filter(str.isdigit, schedule_text)))
-                    next_run = task.last_run_at + timedelta(hours=hours)
+                    next_run = last_run + timedelta(hours=hours)
                     return now >= next_run
                 except ValueError:
                     # Default to 1 hour if parsing fails
-                    next_run = task.last_run_at + timedelta(hours=1)
+                    next_run = last_run + timedelta(hours=1)
                     return now >= next_run
             
             elif "minute" in schedule_text:
                 # Extract number of minutes
                 try:
                     minutes = int(''.join(filter(str.isdigit, schedule_text)))
-                    next_run = task.last_run_at + timedelta(minutes=minutes)
+                    next_run = last_run + timedelta(minutes=minutes)
                     return now >= next_run
                 except ValueError:
                     # Default to 30 minutes if parsing fails
-                    next_run = task.last_run_at + timedelta(minutes=30)
+                    next_run = last_run + timedelta(minutes=30)
                     return now >= next_run
             
             elif "day" in schedule_text:
                 # Extract number of days
                 try:
                     days = int(''.join(filter(str.isdigit, schedule_text)))
-                    next_run = task.last_run_at + timedelta(days=days)
+                    next_run = last_run + timedelta(days=days)
                     return now >= next_run
                 except ValueError:
                     # Default to 1 day if parsing fails
-                    next_run = task.last_run_at + timedelta(days=1)
+                    next_run = last_run + timedelta(days=1)
                     return now >= next_run
         
         # Default: run every hour if schedule is unclear
-        next_run = task.last_run_at + timedelta(hours=1)
+        next_run = last_run + timedelta(hours=1)
         return now >= next_run
     
     def update_last_run_time(self, task_id: str):
@@ -268,7 +274,7 @@ async def execute_scheduled_task(task: ScheduledTask, db_manager: DatabaseManage
 
 async def check_and_execute_tasks():
     """Main function to check for due tasks and execute them"""
-    print(f"🕐 Checking for scheduled tasks at {datetime.utcnow()}")
+    print(f"🕐 Checking for scheduled tasks at {datetime.now(timezone.utc)}")
     
     # Initialize database manager
     database_url = os.environ.get("DATABASE_URL")
@@ -298,7 +304,7 @@ async def check_and_execute_tasks():
 def main():
     """Main entry point for the script"""
     print("🚀 Starting Cron Fetch Browser Task Runner")
-    print(f"⏰ Started at: {datetime.utcnow()}")
+    print(f"⏰ Started at: {datetime.now(timezone.utc)}")
     
     # Check if required environment variables are set
     required_env_vars = ["DATABASE_URL", "BROWSER_USE_API_KEY"]
@@ -311,7 +317,7 @@ def main():
     # Run the task checker once
     asyncio.run(check_and_execute_tasks())
     
-    print(f"✅ Task runner completed at: {datetime.utcnow()}")
+    print(f"✅ Task runner completed at: {datetime.now(timezone.utc)}")
 
 if __name__ == "__main__":
     main()
