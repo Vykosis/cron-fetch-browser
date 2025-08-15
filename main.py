@@ -152,12 +152,6 @@ class BrowserUseAPI:
         # Remove special characters except basic punctuation
         cleaned = re.sub(r'[^\w\s\-.,!?()]', '', cleaned)
         
-        # Escape double quotes
-        cleaned = cleaned.replace('"', '\\"')
-        
-        # Escape single quotes
-        cleaned = cleaned.replace("'", "\\'")
-        
         # Replace multiple spaces with single space
         cleaned = re.sub(r'\s+', ' ', cleaned)
         
@@ -181,7 +175,7 @@ class BrowserUseAPI:
             # Add structured output if provided
             if data_structure:
                 # Format data structure like in Next.js: remove all whitespace and escape double quotes
-                formatted_data_structure = re.sub(r'\s', '', data_structure).replace('"', '\\"')
+                formatted_data_structure = re.sub(r'\s', '', data_structure)
                 payload["structured_output_json"] = formatted_data_structure
             
             # Add allowed domains if provided
