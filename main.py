@@ -10,6 +10,7 @@ import time
 from typing import List, Optional
 import aiohttp
 import asyncio
+import re
 
 # Load environment variables
 load_dotenv()
@@ -143,18 +144,45 @@ class BrowserUseAPI:
         self.api_key = api_key
         self.base_url = "https://api.browser-use.com/api/v1"
     
+    def clean_query(self, query: str) -> str:
+        """Clean and escape the query like in Next.js project"""
+        # Replace newlines, carriage returns, and tabs with spaces
+        cleaned = re.sub(r'[\r\n\t]', ' ', query)
+        
+        # Remove special characters except basic punctuation
+        cleaned = re.sub(r'[^\w\s\-.,!?()]', '', cleaned)
+        
+        # Escape double quotes
+        cleaned = cleaned.replace('"', '\\"')
+        
+        # Escape single quotes
+        cleaned = cleaned.replace("'", "\\'")
+        
+        # Replace multiple spaces with single space
+        cleaned = re.sub(r'\s+', ' ', cleaned)
+        
+        # Remove leading/trailing whitespace
+        cleaned = cleaned.strip()
+        
+        return cleaned
+    
     async def run_task(self, task: str, data_structure: Optional[str] = None, allowed_domains: Optional[List[str]] = None) -> str:
         """Run a task using Browser-Use Cloud API"""
         async with aiohttp.ClientSession() as session:
+            # Clean the task query like in Next.js
+            clean_task = self.clean_query(task)
+            
             # Prepare the request payload
             payload = {
-                "task": task,
+                "task": clean_task,
                 "llm_model": "gpt-4.1-mini"
             }
             
             # Add structured output if provided
             if data_structure:
-                payload["structured_output_json"] = data_structure
+                # Format data structure like in Next.js: remove all whitespace and escape double quotes
+                formatted_data_structure = re.sub(r'\s', '', data_structure).replace('"', '\\"')
+                payload["structured_output_json"] = formatted_data_structure
             
             # Add allowed domains if provided
             if allowed_domains:
@@ -165,7 +193,9 @@ class BrowserUseAPI:
                 "Content-Type": "application/json"
             }
             
-            print(f"🚀 Starting Browser-Use task: {task[:100]}...")
+            print(f"🚀 Starting Browser-Use task: {clean_task[:100]}...")
+            if data_structure:
+                print(f"📋 Using structured output: {formatted_data_structure[:100]}...")
             
             # Start the task
             async with session.post(
