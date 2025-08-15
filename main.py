@@ -187,9 +187,9 @@ class BrowserUseAPI:
                 "Content-Type": "application/json"
             }
             
-            print(f"🚀 Starting Browser-Use task: {clean_task[:100]}...")
-            if data_structure:
-                print(f"📋 Using structured output: {formatted_data_structure[:100]}...")
+            # print(f"🚀 Starting Browser-Use task: {clean_task[:100]}...")
+            # if data_structure:
+            #     print(f"📋 Using structured output: {formatted_data_structure[:100]}...")
             
             # Start the task
             async with session.post(
