@@ -30,7 +30,7 @@ This example starts up a [FastAPI](https://fastapi.tiangolo.com/) server.
 
 # Cron Fetch Browser Task Runner
 
-A standalone Python script that checks a Neon database for scheduled tasks and executes them using browser automation.
+A standalone Python script that checks a Neon database for scheduled tasks and executes them using Browser-Use Cloud API.
 
 ## Overview
 
@@ -38,24 +38,24 @@ This script replaces the previous FastAPI application with a standalone task run
 
 1. Connects to your Neon database
 2. Queries for active scheduled tasks that are due for execution
-3. Executes each task using browser automation via Browserbase
+3. Executes each task using Browser-Use Cloud API
 4. Updates the `last_run_at` timestamp for each completed task
 
 ## Features
 
 - **Database Integration**: Connects to Neon PostgreSQL database
 - **Smart Scheduling**: Parses schedule strings like "every 1 hour", "every 30 minutes", etc.
-- **Browser Automation**: Uses Browserbase for reliable browser automation
+- **Browser Automation**: Uses Browser-Use Cloud API for reliable browser automation
 - **Error Handling**: Robust error handling with proper cleanup
 - **Logging**: Detailed console output for monitoring
+- **Async HTTP**: Uses aiohttp for efficient API communication
 
 ## Environment Variables
 
 Set these environment variables in your Railway project:
 
 - `DATABASE_URL`: Your Neon database connection string
-- `BROWSERBASE_API_KEY`: Your Browserbase API key
-- `BROWSERBASE_PROJECT_ID`: Your Browserbase project ID
+- `BROWSER_USE_API_KEY`: Your Browser-Use Cloud API key
 
 ## Database Schema
 
@@ -87,13 +87,21 @@ The script supports the following schedule formats:
 
 If the schedule format is unclear, it defaults to running every hour.
 
+## Browser-Use Cloud API Integration
+
+The script uses the Browser-Use Cloud API to execute browser automation tasks:
+
+- **Task Execution**: Sends tasks to the Browser-Use Cloud API
+- **Status Polling**: Monitors task status until completion
+- **Structured Output**: Supports structured JSON output if specified
+- **Error Handling**: Handles API errors and timeouts gracefully
+
 ## Deployment on Railway
 
 1. **Connect your repository** to Railway
 2. **Set environment variables** in the Railway dashboard:
    - `DATABASE_URL`
-   - `BROWSERBASE_API_KEY`
-   - `BROWSERBASE_PROJECT_ID`
+   - `BROWSER_USE_API_KEY`
 3. **Deploy** - Railway will automatically build and deploy your script
 
 ## How It Works
@@ -104,23 +112,25 @@ If the schedule format is unclear, it defaults to running every hour.
    - `last_run_at` timestamp
    - `schedule` string
 4. If a task is due, it:
-   - Creates a Browserbase session
-   - Executes the task using browser automation
+   - Sends the task to Browser-Use Cloud API
+   - Polls for task completion
    - Updates the `last_run_at` timestamp
-   - Cleans up browser resources
+   - Logs the results
 
 ## Monitoring
 
 The script provides detailed console output including:
 - Task execution status
-- Browser session management
+- API request/response details
+- Task polling progress
 - Error messages and stack traces
 - Timing information
 
 ## Error Handling
 
 - If a task fails, the `last_run_at` is still updated to prevent infinite retries
-- Browser sessions are properly cleaned up even on errors
+- API errors are caught and logged
+- Network timeouts are handled gracefully
 - Database connections are properly closed
 - Missing environment variables are detected and reported
 
@@ -136,8 +146,7 @@ To run locally:
 2. Set up environment variables in a `.env` file:
    ```
    DATABASE_URL=your_neon_connection_string
-   BROWSERBASE_API_KEY=your_browserbase_api_key
-   BROWSERBASE_PROJECT_ID=your_browserbase_project_id
+   BROWSER_USE_API_KEY=your_browser_use_api_key
    ```
 
 3. Run the script:
@@ -167,15 +176,34 @@ For continuous operation, consider setting up a GitHub Action that:
    - Check your `DATABASE_URL` environment variable
    - Ensure your Neon database is accessible
 
-2. **Browserbase API Errors**
-   - Verify your `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID`
-   - Check your Browserbase account status
+2. **Browser-Use API Errors**
+   - Verify your `BROWSER_USE_API_KEY` environment variable
+   - Check your Browser-Use account status and API limits
+   - Ensure the API key has proper permissions
 
 3. **Task Not Running**
    - Verify the task is marked as `is_active = true`
    - Check the `schedule` format is supported
    - Ensure `last_run_at` is properly set
 
+4. **Task Timeout**
+   - Tasks have a 5-minute timeout by default
+   - Check if the task is taking too long to complete
+   - Verify the task query is valid
+
 ### Logs
 
 Check Railway logs for detailed error messages and execution status.
+
+## API Response Format
+
+The script expects Browser-Use Cloud API responses in the following format:
+
+```json
+{
+  "id": "task_id_here",
+  "status": "completed|running|failed|pending",
+  "result": "task_result_here",
+  "error": "error_message_if_failed"
+}
+```

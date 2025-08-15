@@ -8,12 +8,8 @@ from dotenv import load_dotenv
 import schedule
 import time
 from typing import List, Optional
-
-from browserbase import Browserbase
-from browser_use import Agent
-from browser_use.browser.session import BrowserSession
-from browser_use.browser import BrowserProfile
-from browser_use.llm import ChatOpenAI
+import aiohttp
+import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -136,152 +132,134 @@ class DatabaseManager:
         finally:
             conn.close()
 
-class ManagedBrowserSession:
-    """Context manager for proper BrowserSession lifecycle management"""
+class BrowserUseAPI:
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.base_url = "https://api.browser-use.com/api/v1"
     
-    def __init__(self, cdp_url: str, browser_profile: BrowserProfile):
-        self.cdp_url = cdp_url
-        self.browser_profile = browser_profile
-        self.browser_session = None
-        
-    async def __aenter__(self) -> BrowserSession:
-        try:
-            self.browser_session = BrowserSession(
-                cdp_url=self.cdp_url,
-                browser_profile=self.browser_profile,
-                keep_alive=False,  # Essential for proper cleanup
-                initialized=False,
-            )
+    async def run_task(self, task: str, data_structure: Optional[str] = None, allowed_domains: Optional[List[str]] = None) -> str:
+        """Run a task using Browser-Use Cloud API"""
+        async with aiohttp.ClientSession() as session:
+            # Prepare the request payload
+            payload = {
+                "task": task,
+                "llm_model": "gpt-4.1-mini"
+            }
             
-            await self.browser_session.start()
-            print("✅ Browser session initialized successfully")
-            return self.browser_session
+            # Add structured output if provided
+            if data_structure:
+                payload["structured_output_json"] = data_structure
             
-        except Exception as e:
-            print(f"❌ Failed to initialize browser session: {e}")
-            await self._emergency_cleanup()
-            raise
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self._close_session_properly()
-    
-    async def _close_session_properly(self):
-        playwright_instance = None
-        
-        try:
-            if self.browser_session:
-                # Get playwright instance before closing session
-                if hasattr(self.browser_session, 'playwright'):
-                    playwright_instance = self.browser_session.playwright
+            # Add allowed domains if provided
+            if allowed_domains:
+                payload["allowed_domains"] = allowed_domains
+            
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            print(f"🚀 Starting Browser-Use task: {task[:100]}...")
+            
+            # Start the task
+            async with session.post(
+                f"{self.base_url}/run-task",
+                headers=headers,
+                json=payload
+            ) as response:
+                if not response.ok:
+                    error_text = await response.text()
+                    raise Exception(f"Failed to start task: {response.status} - {error_text}")
                 
-                # Close browser session first
-                if self.browser_session.initialized:
-                    await self.browser_session.stop()
-                    print("✅ Browser session closed successfully")
+                result = await response.json()
+                task_id = result.get("id")
+                
+                if not task_id:
+                    detail = result.get("detail", "Unknown error")
+                    raise Exception(f"Failed to get task ID: {detail}")
+                
+                print(f"📋 Task started with ID: {task_id}")
+                
+                # Poll for task completion
+                return await self._poll_task_completion(session, task_id, headers)
+    
+    async def _poll_task_completion(self, session: aiohttp.ClientSession, task_id: str, headers: dict) -> str:
+        """Poll for task completion and return results"""
+        max_attempts = 60  # 5 minutes with 5-second intervals
+        attempt = 0
+        
+        while attempt < max_attempts:
+            try:
+                async with session.get(
+                    f"{self.base_url}/task/{task_id}",
+                    headers=headers
+                ) as response:
+                    if not response.ok:
+                        error_text = await response.text()
+                        print(f"⚠️  Error checking task status: {response.status} - {error_text}")
+                        await asyncio.sleep(5)
+                        attempt += 1
+                        continue
                     
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "browser is closed" in error_msg or "disconnected" in error_msg:
-                print("ℹ️  Browser session was already closed (expected behavior)")
-            else:
-                print(f"⚠️  Error during browser session closure: {e}")
+                    task_data = await response.json()
+                    status = task_data.get("status")
+                    
+                    print(f"📊 Task {task_id} status: {status}")
+                    
+                    if status == "completed":
+                        result = task_data.get("result", "Task completed successfully")
+                        print(f"✅ Task {task_id} completed successfully")
+                        return str(result)
+                    
+                    elif status == "failed":
+                        error = task_data.get("error", "Unknown error")
+                        raise Exception(f"Task failed: {error}")
+                    
+                    elif status in ["running", "pending"]:
+                        # Task is still running, wait and check again
+                        await asyncio.sleep(5)
+                        attempt += 1
+                        continue
+                    
+                    else:
+                        print(f"⚠️  Unknown status: {status}")
+                        await asyncio.sleep(5)
+                        attempt += 1
+                        continue
+                        
+            except Exception as e:
+                print(f"⚠️  Error polling task status: {e}")
+                await asyncio.sleep(5)
+                attempt += 1
         
-        finally:
-            # Stop playwright instance - critical for preventing hanging processes
-            if playwright_instance:
-                try:
-                    await playwright_instance.stop()
-                    print("✅ Playwright instance stopped successfully")
-                except Exception as e:
-                    print(f"⚠️  Error stopping Playwright: {e}")
-            
-            await self._final_cleanup()
-    
-    async def _emergency_cleanup(self):
-        try:
-            if self.browser_session:
-                if hasattr(self.browser_session, 'playwright'):
-                    await self.browser_session.playwright.stop()
-                if self.browser_session.initialized:
-                    await self.browser_session.stop()
-        except Exception as e:
-            print(f"⚠️  Emergency cleanup error: {e}")
-        finally:
-            await self._final_cleanup()
-    
-    async def _final_cleanup(self):
-        self.browser_session = None
-
-async def create_browserbase_session():
-    bb = Browserbase(api_key=os.environ["BROWSERBASE_API_KEY"])
-    session = bb.sessions.create(project_id=os.environ["BROWSERBASE_PROJECT_ID"])
-    
-    print(f"Session ID: {session.id}")
-    print(f"Debug URL: https://www.browserbase.com/sessions/{session.id}")
-    
-    return session
-
-def create_browser_profile() -> BrowserProfile:
-    return BrowserProfile(
-        keep_alive=False,  # Essential for proper cleanup
-        wait_between_actions=2.0,
-        default_timeout=60000,
-        default_navigation_timeout=60000,
-        headless=False,
-    )
-
-async def run_automation_task(browser_session: BrowserSession, task: str) -> str:
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
-
-    agent = Agent(
-        task=task,
-        llm=llm,
-        browser_session=browser_session,
-        max_failures=5,
-        retry_delay=5,
-        max_actions_per_step=3,
-        extend_system_message = """ REMEMBER the most important RULE: Stay on the same tab, never open a new tab!!! """
-    )
-    
-    try:
-        print("🚀 Starting agent task...")
-        result = await agent.run(max_steps=20)
-        print("🎉 Task completed successfully!")
-        return str(result)
-        
-    except Exception as e:
-        # Handle expected browser disconnection after successful completion
-        error_msg = str(e).lower()
-        if "browser is closed" in error_msg or "disconnected" in error_msg:
-            print("✅ Task completed - Browser session ended normally")
-            return "Task completed successfully (session ended normally)"
-        else:
-            print(f"❌ Agent execution error: {e}")
-            raise
-            
-    finally:
-        del agent
+        raise Exception(f"Task {task_id} timed out after {max_attempts * 5} seconds")
 
 async def execute_scheduled_task(task: ScheduledTask, db_manager: DatabaseManager):
-    """Execute a single scheduled task"""
+    """Execute a single scheduled task using Browser-Use Cloud API"""
     print(f"🔄 Executing task: {task.task_name} (ID: {task.id})")
     print(f"📝 Task query: {task.query}")
     
     try:
-        # Create browser session
-        session = await create_browserbase_session()
-        browser_profile = create_browser_profile()
+        # Initialize Browser-Use API
+        api_key = os.environ.get("BROWSER_USE_API_KEY")
+        if not api_key:
+            raise Exception("BROWSER_USE_API_KEY environment variable not set")
         
-        async with ManagedBrowserSession(session.connect_url, browser_profile) as browser_session:
-            # Execute the task
-            result = await run_automation_task(browser_session, task.query)
-            print(f"✅ Task '{task.task_name}' completed successfully")
-            print(f"📊 Result: {result}")
-            
-            # Update last run time in database
-            db_manager.update_last_run_time(task.id)
-            print(f"📅 Updated last_run_at for task {task.id}")
-            
+        browser_use = BrowserUseAPI(api_key)
+        
+        # Execute the task
+        result = await browser_use.run_task(
+            task=task.query,
+            data_structure=task.data_structure
+        )
+        
+        print(f"✅ Task '{task.task_name}' completed successfully")
+        print(f"📊 Result: {result}")
+        
+        # Update last run time in database
+        db_manager.update_last_run_time(task.id)
+        print(f"📅 Updated last_run_at for task {task.id}")
+        
     except Exception as e:
         print(f"❌ Failed to execute task '{task.task_name}': {e}")
         # Still update last run time to prevent infinite retries
@@ -323,7 +301,7 @@ def main():
     print(f"⏰ Started at: {datetime.utcnow()}")
     
     # Check if required environment variables are set
-    required_env_vars = ["DATABASE_URL", "BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID"]
+    required_env_vars = ["DATABASE_URL", "BROWSER_USE_API_KEY"]
     missing_vars = [var for var in required_env_vars if not os.environ.get(var)]
     
     if missing_vars:
